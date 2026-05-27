@@ -4,11 +4,11 @@
 
 ## 📊 GitHub Stats
 
-<img align="right" src="https://github-stats-extended.vercel.app/api?username=Rememorio&show_icons=true&theme=default&hide_border=true&bg_color=ffffff&text_color=24292e&icon_color=0366d6&title_color=24292e&role=OWNER,ORGANIZATION_MEMBER,COLLABORATOR&v=direct-collab-20260527"/>
+<img align="right" src="https://github-stats-extended.vercel.app/api?username=Rememorio&show_icons=true&theme=default&hide_border=true&bg_color=ffffff&text_color=24292e&icon_color=0366d6&title_color=24292e&role=OWNER,ORGANIZATION_MEMBER,COLLABORATOR&number_format=long&v=direct-collab-20260527-4"/>
 
 ## 🏆 Language Proficiency
 
-![Top Languages](https://github-stats-extended.vercel.app/api/top-langs/?username=Rememorio&role=OWNER,ORGANIZATION_MEMBER,COLLABORATOR&theme=default&layout=compact&hide_border=true&bg_color=ffffff&text_color=24292e&langs_count=8&v=direct-collab-20260527)
+![Top Languages](https://github-stats-extended.vercel.app/api/top-langs/?username=Rememorio&role=OWNER,ORGANIZATION_MEMBER,COLLABORATOR&theme=default&layout=compact&hide_border=true&bg_color=ffffff&text_color=24292e&langs_count=8&v=direct-collab-20260527-4)
 
 ## 📦 Recent Work
 
