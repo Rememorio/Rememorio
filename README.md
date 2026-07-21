@@ -4,7 +4,7 @@
 
 ## 📊 GitHub Stats
 
-<img align="right" src="https://github-stats-extended.vercel.app/api?username=Rememorio&show_icons=true&theme=default&hide_border=true&bg_color=ffffff&text_color=24292e&icon_color=0366d6&title_color=24292e&role=OWNER,ORGANIZATION_MEMBER,COLLABORATOR&number_format=long&v=direct-collab-20260527-4"/>
+![GitHub statistics](https://raw.githubusercontent.com/Rememorio/Rememorio/output/github-user-stats.svg)
 
 ## 🏆 Language Proficiency
 
