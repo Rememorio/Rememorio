@@ -4,7 +4,11 @@
 
 ## 📊 GitHub Stats
 
-![GitHub statistics](https://raw.githubusercontent.com/Rememorio/Rememorio/output/github-user-stats.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Rememorio/Rememorio/output/github-user-stats-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Rememorio/Rememorio/output/github-user-stats.svg">
+  <img alt="GitHub statistics" src="https://raw.githubusercontent.com/Rememorio/Rememorio/output/github-user-stats.svg">
+</picture>
 
 ## 🏆 Language Proficiency
 

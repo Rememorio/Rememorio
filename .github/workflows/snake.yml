@@ -32,6 +32,7 @@ jobs:
           python3 .github/scripts/generate_github_stats.py
           --username "${{ github.repository_owner }}"
           --output dist/github-user-stats.svg
+          --dark-output dist/github-user-stats-dark.svg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

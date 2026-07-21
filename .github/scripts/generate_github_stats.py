@@ -39,6 +39,29 @@ query($login: String!, $after: String) {
 }
 """
 
+THEMES = {
+    "light": {
+        "background": "#ffffff",
+        "border": "#d0d7de",
+        "accent": "#0969da",
+        "label": "#57606a",
+        "value": "#24292f",
+        "divider": "#d8dee4",
+        "footer": "#6e7781",
+        "rank_track": "#d8dee4",
+    },
+    "dark": {
+        "background": "#0d1117",
+        "border": "#30363d",
+        "accent": "#58a6ff",
+        "label": "#8b949e",
+        "value": "#c9d1d9",
+        "divider": "#21262d",
+        "footer": "#6e7681",
+        "rank_track": "#30363d",
+    },
+}
+
 
 class GitHubAPIError(RuntimeError):
     pass
@@ -205,7 +228,9 @@ def render_card(
     pull_requests: int,
     issues: int,
     reviews: int,
+    theme_name: str,
 ) -> str:
+    theme = THEMES[theme_name]
     original_repositories = [repo for repo in repositories if not repo.get("fork")]
     stars = sum(int(repo.get("stargazers_count", 0)) for repo in original_repositories)
     forks = sum(int(repo.get("forks_count", 0)) for repo in original_repositories)
@@ -236,7 +261,7 @@ def render_card(
         for index, (label, value) in enumerate(stats):
             y = 88 + index * 34
             rows.append(
-                f'<circle cx="{x}" cy="{y - 5}" r="3" fill="#539bf5"/>'
+                f'<circle cx="{x}" cy="{y - 5}" r="3" fill="{theme["accent"]}"/>'
                 f'<text x="{x + 14}" y="{y}" class="label">{escape(label)}</text>'
                 f'<text x="{x + 275}" y="{y}" class="value" text-anchor="end">'
                 f"{format_value(value)}</text>"
@@ -253,26 +278,26 @@ def render_card(
   <title id="title">{title}</title>
   <desc id="desc">A daily static snapshot of verified GitHub profile statistics. Rank {rank}, top {percentile:.1f} percent.</desc>
   <style>
-    .title {{ font: 600 20px "Segoe UI", Ubuntu, sans-serif; fill: #539bf5; }}
-    .label {{ font: 400 13px "Segoe UI", Ubuntu, sans-serif; fill: #768390; }}
-    .value {{ font: 600 14px "Segoe UI", Ubuntu, sans-serif; fill: #adbac7; }}
-    .rank-label {{ font: 600 11px "Segoe UI", Ubuntu, sans-serif; fill: #768390; letter-spacing: 1px; }}
-    .rank {{ font: 700 25px "Segoe UI", Ubuntu, sans-serif; fill: #539bf5; }}
-    .rank-percentile {{ font: 400 11px "Segoe UI", Ubuntu, sans-serif; fill: #768390; }}
-    .footer {{ font: 400 11px "Segoe UI", Ubuntu, sans-serif; fill: #636e7b; }}
+    .title {{ font: 600 20px "Segoe UI", Ubuntu, sans-serif; fill: {theme["accent"]}; }}
+    .label {{ font: 400 13px "Segoe UI", Ubuntu, sans-serif; fill: {theme["label"]}; }}
+    .value {{ font: 600 14px "Segoe UI", Ubuntu, sans-serif; fill: {theme["value"]}; }}
+    .rank-label {{ font: 600 11px "Segoe UI", Ubuntu, sans-serif; fill: {theme["label"]}; letter-spacing: 1px; }}
+    .rank {{ font: 700 25px "Segoe UI", Ubuntu, sans-serif; fill: {theme["accent"]}; }}
+    .rank-percentile {{ font: 400 11px "Segoe UI", Ubuntu, sans-serif; fill: {theme["label"]}; }}
+    .footer {{ font: 400 11px "Segoe UI", Ubuntu, sans-serif; fill: {theme["footer"]}; }}
   </style>
-  <rect x="0.5" y="0.5" width="759" height="234" rx="8" fill="#22272e" stroke="#444c56"/>
+  <rect x="0.5" y="0.5" width="759" height="234" rx="8" fill="{theme["background"]}" stroke="{theme["border"]}"/>
   <text x="28" y="38" class="title">{title}</text>
-  <path d="M28 55.5H732" stroke="#373e47"/>
+  <path d="M28 55.5H732" stroke="{theme["divider"]}"/>
   {render_column(left_stats, 32)}
   {render_column(right_stats, 327)}
-  <path d="M617 72V194" stroke="#373e47"/>
+  <path d="M617 72V194" stroke="{theme["divider"]}"/>
   <text x="686" y="79" class="rank-label" text-anchor="middle">RANK</text>
-  <circle cx="686" cy="131" r="44" stroke="#373e47" stroke-width="8"/>
-  <circle cx="686" cy="131" r="44" stroke="#539bf5" stroke-width="8" stroke-linecap="round" stroke-dasharray="{rank_circumference:.2f}" stroke-dashoffset="{rank_offset:.2f}" transform="rotate(-90 686 131)"/>
+  <circle cx="686" cy="131" r="44" stroke="{theme["rank_track"]}" stroke-width="8"/>
+  <circle cx="686" cy="131" r="44" stroke="{theme["accent"]}" stroke-width="8" stroke-linecap="round" stroke-dasharray="{rank_circumference:.2f}" stroke-dashoffset="{rank_offset:.2f}" transform="rotate(-90 686 131)"/>
   <text x="686" y="140" class="rank" text-anchor="middle">{rank}</text>
   <text x="686" y="194" class="rank-percentile" text-anchor="middle">Top {percentile:.1f}%</text>
-  <path d="M28 207.5H732" stroke="#373e47"/>
+  <path d="M28 207.5H732" stroke="{theme["divider"]}"/>
   <text x="28" y="224" class="footer">Updated daily · {updated_at}</text>
 </svg>
 '''
@@ -282,6 +307,7 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a static GitHub profile card")
     parser.add_argument("--username", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--dark-output", type=Path)
     return parser.parse_args()
 
 
@@ -314,24 +340,35 @@ def main() -> int:
         reviews = fetch_search_count(
             f"reviewed-by:{arguments.username} type:pr", "issues", token
         )
-        card = render_card(
-            arguments.username,
-            profile,
-            repositories,
-            commits,
-            pull_requests,
-            issues,
-            reviews,
-        )
+        cards = [(arguments.output, "light")]
+        if arguments.dark_output:
+            cards.append((arguments.dark_output, "dark"))
+        rendered_cards = [
+            (
+                output,
+                render_card(
+                    arguments.username,
+                    profile,
+                    repositories,
+                    commits,
+                    pull_requests,
+                    issues,
+                    reviews,
+                    theme_name,
+                ),
+            )
+            for output, theme_name in cards
+        ]
     except GitHubAPIError as error:
         print(f"::error::{error}")
         return 1
 
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    temporary_output = arguments.output.with_suffix(arguments.output.suffix + ".tmp")
-    temporary_output.write_text(card, encoding="utf-8")
-    temporary_output.replace(arguments.output)
-    print(f"Generated {arguments.output}")
+    for output, card in rendered_cards:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary_output = output.with_suffix(output.suffix + ".tmp")
+        temporary_output.write_text(card, encoding="utf-8")
+        temporary_output.replace(output)
+        print(f"Generated {output}")
     return 0
 
 

@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 
 EXPECTED_FILES = (
     "github-user-stats.svg",
+    "github-user-stats-dark.svg",
     "github-contribution-grid-snake.svg",
     "github-contribution-grid-snake-dark.svg",
 )
@@ -18,6 +19,11 @@ ERROR_MARKERS = (
     "unexpected error",
     "error occurred while generating",
 )
+
+THEME_MARKERS = {
+    "github-user-stats.svg": ("#ffffff", "#24292f"),
+    "github-user-stats-dark.svg": ("#0d1117", "#c9d1d9"),
+}
 
 
 def validate_svg(path: Path) -> list[str]:
@@ -46,6 +52,10 @@ def validate_svg(path: Path) -> list[str]:
     for marker in ERROR_MARKERS:
         if marker in normalized:
             errors.append(f"Generated asset contains error marker {marker!r}: {path}")
+
+    for marker in THEME_MARKERS.get(path.name, ()):
+        if marker not in normalized:
+            errors.append(f"Generated asset is missing theme marker {marker!r}: {path}")
 
     return errors
 
