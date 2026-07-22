@@ -39,6 +39,67 @@ query($login: String!, $after: String) {
 }
 """
 
+LANGUAGE_REPOSITORIES_QUERY = """
+query($login: String!, $after: String) {
+  user(login: $login) {
+    repositories(
+      first: 50
+      after: $after
+      ownerAffiliations: [OWNER, ORGANIZATION_MEMBER, COLLABORATOR]
+      isFork: false
+      orderBy: {direction: DESC, field: STARGAZERS}
+    ) {
+      nodes {
+        nameWithOwner
+        primaryLanguage {
+          color
+          name
+        }
+        languages(first: 10, orderBy: {direction: DESC, field: SIZE}) {
+          edges {
+            size
+            node {
+              color
+              name
+            }
+          }
+        }
+      }
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+    }
+  }
+}
+"""
+
+LANGUAGE_COLORS = {
+    "C": "#555555",
+    "C++": "#f34b7d",
+    "CSS": "#663399",
+    "Go": "#00add8",
+    "HTML": "#e34c26",
+    "Java": "#b07219",
+    "JavaScript": "#f1e05a",
+    "Jupyter Notebook": "#da5b0b",
+    "Kotlin": "#a97bff",
+    "Python": "#3572a5",
+    "Rust": "#dea584",
+    "Shell": "#89e051",
+    "Swift": "#f05138",
+    "TypeScript": "#3178c6",
+}
+
+FALLBACK_LANGUAGE_COLORS = (
+    "#0969da",
+    "#8250df",
+    "#bf8700",
+    "#1a7f37",
+    "#cf222e",
+    "#0550ae",
+)
+
 THEMES = {
     "light": {
         "background": "#ffffff",
@@ -175,6 +236,124 @@ def fetch_affiliated_repositories(
     return repositories
 
 
+def language_color(name: str, api_color: Optional[str] = None) -> str:
+    if api_color:
+        return api_color
+    if name in LANGUAGE_COLORS:
+        return LANGUAGE_COLORS[name]
+    color_index = sum(
+        (index + 1) * ord(character) for index, character in enumerate(name)
+    ) % len(FALLBACK_LANGUAGE_COLORS)
+    return FALLBACK_LANGUAGE_COLORS[color_index]
+
+
+def fetch_affiliated_language_repositories(
+    username: str, token: str
+) -> Optional[list[dict[str, Any]]]:
+    repositories: list[dict[str, Any]] = []
+    cursor = None
+
+    for _ in range(20):
+        response = request_json(
+            f"{API_ROOT}/graphql",
+            token,
+            {
+                "query": LANGUAGE_REPOSITORIES_QUERY,
+                "variables": {"login": username, "after": cursor},
+            },
+        )
+        if not isinstance(response, dict):
+            raise GitHubAPIError("GitHub language repositories response was invalid")
+
+        if response.get("errors"):
+            print(
+                "::warning::Affiliated language statistics were unavailable; "
+                "using owned public repositories."
+            )
+            return None
+
+        try:
+            connection = response["data"]["user"]["repositories"]
+            for repository in connection["nodes"]:
+                primary_language = repository["primaryLanguage"]
+                repositories.append(
+                    {
+                        "full_name": repository["nameWithOwner"],
+                        "primary_language": primary_language,
+                        "languages": [
+                            {
+                                "color": edge["node"]["color"],
+                                "name": edge["node"]["name"],
+                                "size": edge["size"],
+                            }
+                            for edge in repository["languages"]["edges"]
+                        ],
+                    }
+                )
+            if not connection["pageInfo"]["hasNextPage"]:
+                return repositories
+            cursor = connection["pageInfo"]["endCursor"]
+        except (KeyError, TypeError):
+            raise GitHubAPIError(
+                "GitHub language repositories response was invalid"
+            ) from None
+
+    print(
+        "::warning::Affiliated language statistics exceeded 1,000 repositories; "
+        "using the first 1,000 ordered by stars."
+    )
+    return repositories
+
+
+def fetch_owned_language_repositories(
+    repositories: list[dict[str, Any]], token: str
+) -> list[dict[str, Any]]:
+    language_repositories: list[dict[str, Any]] = []
+
+    for repository in repositories:
+        if repository.get("fork"):
+            continue
+        full_name = repository.get("full_name")
+        if not isinstance(full_name, str):
+            continue
+        try:
+            response = request_json(
+                f"{API_ROOT}/repos/{quote(full_name, safe='/')}/languages", token
+            )
+        except GitHubAPIError as error:
+            print(f"::warning::{full_name} language data was unavailable: {error}")
+            response = {}
+        if not isinstance(response, dict):
+            response = {}
+
+        primary_name = repository.get("language")
+        primary_language = (
+            {
+                "color": language_color(primary_name),
+                "name": primary_name,
+            }
+            if isinstance(primary_name, str)
+            else None
+        )
+        language_repositories.append(
+            {
+                "full_name": full_name,
+                "primary_language": primary_language,
+                "languages": [
+                    {
+                        "color": language_color(name),
+                        "name": name,
+                        "size": size,
+                    }
+                    for name, size in response.items()
+                    if isinstance(name, str) and isinstance(size, int)
+                ],
+            }
+        )
+
+    return language_repositories
+
+
 def fetch_search_count(search_query: str, endpoint: str, token: str) -> int:
     query = urlencode({"q": search_query, "per_page": 1})
     response = request_json(f"{API_ROOT}/search/{endpoint}?{query}", token)
@@ -303,11 +482,168 @@ def render_card(
 '''
 
 
+def aggregate_languages(
+    repositories: list[dict[str, Any]],
+) -> tuple[dict[str, int], dict[str, int], dict[str, str]]:
+    code_sizes: dict[str, int] = {}
+    repository_counts: dict[str, int] = {}
+    colors: dict[str, str] = {}
+
+    for repository in repositories:
+        primary_language = repository.get("primary_language")
+        if isinstance(primary_language, dict):
+            name = primary_language.get("name")
+            if isinstance(name, str):
+                repository_counts[name] = repository_counts.get(name, 0) + 1
+                colors.setdefault(
+                    name, language_color(name, primary_language.get("color"))
+                )
+
+        languages = repository.get("languages", [])
+        if not isinstance(languages, list):
+            continue
+        for language in languages:
+            if not isinstance(language, dict):
+                continue
+            name = language.get("name")
+            size = language.get("size")
+            if not isinstance(name, str) or not isinstance(size, int) or size <= 0:
+                continue
+            code_sizes[name] = code_sizes.get(name, 0) + size
+            colors.setdefault(name, language_color(name, language.get("color")))
+
+    return code_sizes, repository_counts, colors
+
+
+def compact_languages(
+    values: dict[str, int],
+    colors: dict[str, str],
+    other_color: str,
+    limit: int = 6,
+) -> list[tuple[str, int, str]]:
+    ordered = sorted(values.items(), key=lambda item: (-item[1], item[0].casefold()))
+    if len(ordered) <= limit:
+        return [(name, value, colors[name]) for name, value in ordered]
+
+    visible = [(name, value, colors[name]) for name, value in ordered[: limit - 1]]
+    other_value = sum(value for _, value in ordered[limit - 1 :])
+    visible.append(("Other", other_value, other_color))
+    return visible
+
+
+def format_percentage(value: int, total: int) -> str:
+    if total <= 0:
+        return "0%"
+    percentage = value / total * 100
+    if 0 < percentage < 0.1:
+        return "<0.1%"
+    return f"{percentage:.1f}%"
+
+
+def render_language_card(
+    repositories: list[dict[str, Any]], theme_name: str
+) -> str:
+    theme = THEMES[theme_name]
+    code_sizes, repository_counts, colors = aggregate_languages(repositories)
+    code_total = sum(code_sizes.values())
+    repository_total = sum(repository_counts.values())
+    code_languages = compact_languages(
+        code_sizes, colors, theme["label"], limit=6
+    )
+    repository_languages = compact_languages(
+        repository_counts, colors, theme["label"], limit=6
+    )
+
+    if code_languages:
+        bar_parts = []
+        current_x = 28.0
+        for index, (_, value, color) in enumerate(code_languages):
+            width = 326 * value / code_total
+            if index == len(code_languages) - 1:
+                width = 354 - current_x
+            bar_parts.append(
+                f'<rect x="{current_x:.2f}" y="91" width="{width:.2f}" '
+                f'height="11" fill="{color}"/>'
+            )
+            current_x += width
+        code_bar = "".join(bar_parts)
+        legend_parts = []
+        for index, (name, value, color) in enumerate(code_languages):
+            column = index % 2
+            row = index // 2
+            x = 32 + column * 166
+            y = 132 + row * 31
+            legend_parts.append(
+                f'<circle cx="{x}" cy="{y - 4}" r="4" fill="{color}"/>'
+                f'<text x="{x + 12}" y="{y}" class="label">{escape(name)}</text>'
+                f'<text x="{x + 148}" y="{y}" class="value" text-anchor="end">'
+                f'{format_percentage(value, code_total)}</text>'
+            )
+        code_legend = "".join(legend_parts)
+    else:
+        code_bar = ""
+        code_legend = (
+            '<text x="28" y="132" class="label">No language data available</text>'
+        )
+
+    repository_parts = []
+    maximum_repository_count = max(repository_counts.values(), default=1)
+    for index, (name, count, color) in enumerate(repository_languages):
+        y = 104 + index * 24
+        bar_width = 150 * count / maximum_repository_count
+        repository_parts.append(
+            f'<text x="407" y="{y}" class="label">{escape(name)}</text>'
+            f'<rect x="535" y="{y - 8}" width="150" height="8" rx="4" '
+            f'fill="{theme["rank_track"]}"/>'
+            f'<rect x="535" y="{y - 8}" width="{bar_width:.2f}" height="8" '
+            f'rx="4" fill="{color}"/>'
+            f'<text x="724" y="{y}" class="value" text-anchor="end">{count}</text>'
+        )
+    if not repository_parts:
+        repository_parts.append(
+            '<text x="407" y="104" class="label">No repository data available</text>'
+        )
+
+    updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    leading_code_language = code_languages[0][0] if code_languages else "unknown"
+    leading_repository_language = (
+        repository_languages[0][0] if repository_languages else "unknown"
+    )
+
+    return f'''<svg width="760" height="270" viewBox="0 0 760 270" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Language Overview</title>
+  <desc id="desc">Daily language statistics by code size and repository count. Leading languages: {escape(leading_code_language)} by code size and {escape(leading_repository_language)} by repository count.</desc>
+  <style>
+    .title {{ font: 600 20px "Segoe UI", Ubuntu, sans-serif; fill: {theme["accent"]}; }}
+    .section {{ font: 600 11px "Segoe UI", Ubuntu, sans-serif; fill: {theme["label"]}; letter-spacing: 1px; }}
+    .label {{ font: 400 13px "Segoe UI", Ubuntu, sans-serif; fill: {theme["label"]}; }}
+    .value {{ font: 600 13px "Segoe UI", Ubuntu, sans-serif; fill: {theme["value"]}; }}
+    .footer {{ font: 400 11px "Segoe UI", Ubuntu, sans-serif; fill: {theme["footer"]}; }}
+  </style>
+  <rect x="0.5" y="0.5" width="759" height="269" rx="8" fill="{theme["background"]}" stroke="{theme["border"]}"/>
+  <text x="28" y="38" class="title">Language Overview</text>
+  <path d="M28 55.5H732" stroke="{theme["divider"]}"/>
+  <text x="28" y="78" class="section">BY CODE SIZE</text>
+  <rect x="28" y="91" width="326" height="11" rx="5.5" fill="{theme["rank_track"]}"/>
+  <g clip-path="url(#code-size-bar)">{code_bar}</g>
+  <defs><clipPath id="code-size-bar"><rect x="28" y="91" width="326" height="11" rx="5.5"/></clipPath></defs>
+  {code_legend}
+  <path d="M380 72V226" stroke="{theme["divider"]}"/>
+  <text x="407" y="78" class="section">BY REPOSITORY COUNT</text>
+  {''.join(repository_parts)}
+  <path d="M28 242.5H732" stroke="{theme["divider"]}"/>
+  <text x="28" y="260" class="footer">Based on {repository_total} repositories with detected languages · Updated daily · {updated_at}</text>
+</svg>
+'''
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a static GitHub profile card")
     parser.add_argument("--username", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dark-output", type=Path)
+    parser.add_argument("--language-output", type=Path)
+    parser.add_argument("--dark-language-output", type=Path)
     return parser.parse_args()
 
 
@@ -359,6 +695,26 @@ def main() -> int:
             )
             for output, theme_name in cards
         ]
+        language_cards = []
+        if arguments.language_output:
+            language_cards.append((arguments.language_output, "light"))
+        if arguments.dark_language_output:
+            language_cards.append((arguments.dark_language_output, "dark"))
+        if language_cards:
+            language_repositories = fetch_affiliated_language_repositories(
+                arguments.username, token
+            )
+            if language_repositories is None:
+                language_repositories = fetch_owned_language_repositories(
+                    owned_repositories, token
+                )
+            rendered_cards.extend(
+                (
+                    output,
+                    render_language_card(language_repositories, theme_name),
+                )
+                for output, theme_name in language_cards
+            )
     except GitHubAPIError as error:
         print(f"::error::{error}")
         return 1

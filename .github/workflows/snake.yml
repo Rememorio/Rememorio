@@ -33,6 +33,8 @@ jobs:
           --username "${{ github.repository_owner }}"
           --output dist/github-user-stats.svg
           --dark-output dist/github-user-stats-dark.svg
+          --language-output dist/github-languages.svg
+          --dark-language-output dist/github-languages-dark.svg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

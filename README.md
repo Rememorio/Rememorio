@@ -12,7 +12,11 @@
 
 ## 🏆 Language Proficiency
 
-![Top Languages](https://github-stats-extended.vercel.app/api/top-langs/?username=Rememorio&role=OWNER,ORGANIZATION_MEMBER,COLLABORATOR&theme=default&layout=compact&hide_border=true&bg_color=ffffff&text_color=24292e&langs_count=8&v=direct-collab-20260527-4)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Rememorio/Rememorio/output/github-languages-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Rememorio/Rememorio/output/github-languages.svg">
+  <img alt="GitHub language statistics" src="https://raw.githubusercontent.com/Rememorio/Rememorio/output/github-languages.svg">
+</picture>
 
 ## 📦 Recent Work
 
