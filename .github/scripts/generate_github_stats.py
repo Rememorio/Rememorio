@@ -39,41 +39,6 @@ query($login: String!, $after: String) {
 }
 """
 
-LANGUAGE_REPOSITORIES_QUERY = """
-query($login: String!, $after: String) {
-  user(login: $login) {
-    repositories(
-      first: 50
-      after: $after
-      ownerAffiliations: [OWNER, ORGANIZATION_MEMBER, COLLABORATOR]
-      isFork: false
-      orderBy: {direction: DESC, field: STARGAZERS}
-    ) {
-      nodes {
-        nameWithOwner
-        primaryLanguage {
-          color
-          name
-        }
-        languages(first: 10, orderBy: {direction: DESC, field: SIZE}) {
-          edges {
-            size
-            node {
-              color
-              name
-            }
-          }
-        }
-      }
-      pageInfo {
-        endCursor
-        hasNextPage
-      }
-    }
-  }
-}
-"""
-
 LANGUAGE_COLORS = {
     "C": "#555555",
     "C++": "#f34b7d",
@@ -160,14 +125,16 @@ def request_json(
         raise GitHubAPIError(f"GitHub API request failed: {error.reason}") from None
 
 
-def fetch_repositories(username: str, token: str) -> list[dict[str, Any]]:
+def fetch_repositories(
+    username: str, token: str, repository_type: str = "owner"
+) -> list[dict[str, Any]]:
     repositories: list[dict[str, Any]] = []
     page = 1
 
     while True:
         query = urlencode(
             {
-                "type": "owner",
+                "type": repository_type,
                 "sort": "full_name",
                 "per_page": 100,
                 "page": page,
@@ -247,65 +214,7 @@ def language_color(name: str, api_color: Optional[str] = None) -> str:
     return FALLBACK_LANGUAGE_COLORS[color_index]
 
 
-def fetch_affiliated_language_repositories(
-    username: str, token: str
-) -> Optional[list[dict[str, Any]]]:
-    repositories: list[dict[str, Any]] = []
-    cursor = None
-
-    for _ in range(20):
-        response = request_json(
-            f"{API_ROOT}/graphql",
-            token,
-            {
-                "query": LANGUAGE_REPOSITORIES_QUERY,
-                "variables": {"login": username, "after": cursor},
-            },
-        )
-        if not isinstance(response, dict):
-            raise GitHubAPIError("GitHub language repositories response was invalid")
-
-        if response.get("errors"):
-            print(
-                "::warning::Affiliated language statistics were unavailable; "
-                "using owned public repositories."
-            )
-            return None
-
-        try:
-            connection = response["data"]["user"]["repositories"]
-            for repository in connection["nodes"]:
-                primary_language = repository["primaryLanguage"]
-                repositories.append(
-                    {
-                        "full_name": repository["nameWithOwner"],
-                        "primary_language": primary_language,
-                        "languages": [
-                            {
-                                "color": edge["node"]["color"],
-                                "name": edge["node"]["name"],
-                                "size": edge["size"],
-                            }
-                            for edge in repository["languages"]["edges"]
-                        ],
-                    }
-                )
-            if not connection["pageInfo"]["hasNextPage"]:
-                return repositories
-            cursor = connection["pageInfo"]["endCursor"]
-        except (KeyError, TypeError):
-            raise GitHubAPIError(
-                "GitHub language repositories response was invalid"
-            ) from None
-
-    print(
-        "::warning::Affiliated language statistics exceeded 1,000 repositories; "
-        "using the first 1,000 ordered by stars."
-    )
-    return repositories
-
-
-def fetch_owned_language_repositories(
+def fetch_language_repositories(
     repositories: list[dict[str, Any]], token: str
 ) -> list[dict[str, Any]]:
     language_repositories: list[dict[str, Any]] = []
@@ -352,6 +261,96 @@ def fetch_owned_language_repositories(
         )
 
     return language_repositories
+
+
+def fetch_contributed_repository_names(username: str, token: str) -> set[str]:
+    since = (datetime.now(timezone.utc) - timedelta(days=365)).date().isoformat()
+    searches = (
+        ("commits", f"author:{username} author-date:>={since}", 3),
+        ("issues", f"author:{username} type:pr is:public", 2),
+        ("issues", f"reviewed-by:{username} type:pr is:public", 2),
+    )
+    repository_names: set[str] = set()
+
+    for endpoint, search_query, page_limit in searches:
+        for page in range(1, page_limit + 1):
+            query = urlencode(
+                {
+                    "q": search_query,
+                    "per_page": 100,
+                    "page": page,
+                }
+            )
+            try:
+                response = request_json(
+                    f"{API_ROOT}/search/{endpoint}?{query}", token
+                )
+            except GitHubAPIError as error:
+                print(
+                    "::warning::Contributed repository discovery was incomplete: "
+                    f"{error}"
+                )
+                break
+            if not isinstance(response, dict) or not isinstance(
+                response.get("items"), list
+            ):
+                print("::warning::GitHub contribution search response was invalid")
+                break
+
+            items = response["items"]
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if endpoint == "commits":
+                    repository = item.get("repository")
+                    full_name = (
+                        repository.get("full_name")
+                        if isinstance(repository, dict)
+                        else None
+                    )
+                else:
+                    repository_url = item.get("repository_url")
+                    full_name = (
+                        "/".join(repository_url.rstrip("/").split("/")[-2:])
+                        if isinstance(repository_url, str)
+                        else None
+                    )
+                if isinstance(full_name, str) and "/" in full_name:
+                    repository_names.add(full_name)
+
+            if len(items) < 100:
+                break
+
+    return repository_names
+
+
+def add_contributed_public_repositories(
+    repositories: list[dict[str, Any]], username: str, token: str
+) -> list[dict[str, Any]]:
+    repositories_by_name = {
+        repository["full_name"]: repository
+        for repository in repositories
+        if isinstance(repository.get("full_name"), str)
+    }
+
+    for full_name in sorted(fetch_contributed_repository_names(username, token)):
+        if full_name in repositories_by_name:
+            continue
+        try:
+            repository = request_json(
+                f"{API_ROOT}/repos/{quote(full_name, safe='/')}", token
+            )
+        except GitHubAPIError as error:
+            print(f"::warning::{full_name} metadata was unavailable: {error}")
+            continue
+        if (
+            isinstance(repository, dict)
+            and not repository.get("private")
+            and isinstance(repository.get("full_name"), str)
+        ):
+            repositories_by_name[repository["full_name"]] = repository
+
+    return list(repositories_by_name.values())
 
 
 def fetch_search_count(search_query: str, endpoint: str, token: str) -> int:
@@ -632,7 +631,7 @@ def render_language_card(
   <text x="407" y="78" class="section">BY REPOSITORY COUNT</text>
   {''.join(repository_parts)}
   <path d="M28 242.5H732" stroke="{theme["divider"]}"/>
-  <text x="28" y="260" class="footer">Based on {repository_total} repositories with detected languages · Updated daily · {updated_at}</text>
+  <text x="28" y="260" class="footer">Based on {repository_total} public repositories with detected languages · Updated daily · {updated_at}</text>
 </svg>
 '''
 
@@ -701,13 +700,15 @@ def main() -> int:
         if arguments.dark_language_output:
             language_cards.append((arguments.dark_language_output, "dark"))
         if language_cards:
-            language_repositories = fetch_affiliated_language_repositories(
-                arguments.username, token
+            public_repositories = fetch_repositories(
+                arguments.username, token, repository_type="all"
             )
-            if language_repositories is None:
-                language_repositories = fetch_owned_language_repositories(
-                    owned_repositories, token
-                )
+            public_repositories = add_contributed_public_repositories(
+                public_repositories, arguments.username, token
+            )
+            language_repositories = fetch_language_repositories(
+                public_repositories, token
+            )
             rendered_cards.extend(
                 (
                     output,
